@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import crypto from 'node:crypto';
 
 // ############################################################################
 // # These four pragmas are NOT optional and are NOT a one-time setup step.    #
