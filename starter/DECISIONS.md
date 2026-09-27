@@ -94,6 +94,132 @@ _Reads as a memory of the document, not a model of the system. Scores nothing._
 
 ---
 
+## 1. Keep organization authorization in the existing request context
+
+Decision:
+Use the existing authenticated context to establish the caller's organization.
+
+Problem:
+Routes receive an `:org` parameter, but a client-supplied organization ID must not establish authorization.
+
+Rejected alternative:
+Trust the organization ID supplied in the route and perform authorization later.
+
+Why the alternative is worse:
+It increases the risk of cross-organization access and duplicates organization-isolation logic across routes.
+
+---
+
+## 2. Keep permission resolution centralized
+
+Decision:
+Use the existing permission functions in `server/permissions.js` for Phase 3 authorization.
+
+Problem:
+Member and invite operations require permission checks and role-based administrative rules.
+
+Rejected alternative:
+Implement permission checks independently inside each route.
+
+Why the alternative is worse:
+Permission rules would become duplicated and could behave differently between endpoints.
+
+---
+
+## 3. Treat invite status as derived from existing database fields
+
+Decision:
+Determine invite state from `accepted_at`, `revoked_at`, and `expires_at`.
+
+Problem:
+The database does not contain a separate invite-status column.
+
+Rejected alternative:
+Add a new `status` column and maintain it separately.
+
+Why the alternative is worse:
+It duplicates state already represented by the existing fields and introduces another value that could become inconsistent.
+
+---
+
+## 4. Keep invite acceptance transactional
+
+Decision:
+Process invite acceptance inside a database transaction.
+
+Problem:
+Accepting an invite changes several related records, including the invite, user, membership, permission version, and audit record.
+
+Rejected alternative:
+Perform each database operation independently.
+
+Why the alternative is worse:
+A failure between operations could leave the invite, user, and membership in an inconsistent state.
+
+---
+
+## 5. Preserve removed users
+
+Decision:
+Mark the membership as `removed` rather than deleting the user.
+
+Problem:
+A user might have memberships in multiple organizations, and audit records reference users.
+
+Rejected alternative:
+Delete the user when removing them from an organization.
+
+Why the alternative is worse:
+Deleting the user would affect other organization memberships and historical references.
+
+---
+
+## 6. Register `/members/me` before `/members/:userId`
+
+Decision:
+Register the self-leave route before the parameterized member route.
+
+Problem:
+The router uses first-match-wins routing.
+
+Rejected alternative:
+Register `/members/:userId` first.
+
+Why the alternative is worse:
+The string `me` would be interpreted as a `userId`, causing the wrong route to execute.
+
+---
+
+## 7. Do not introduce additional architectural abstractions
+
+Decision:
+Keep Phase 3 within the existing Node.js module structure.
+
+Problem:
+Phase 3 contains several related operations, but the application is still a small Node.js backend.
+
+Rejected alternative:
+Introduce repositories, service classes, factories, interfaces, or additional abstraction layers.
+
+Why the alternative is worse:
+Those abstractions would add indirection without solving a demonstrated problem in the existing codebase.
+
+---
+
+## 8. Use database constraints where the schema already provides them
+
+Decision:
+Rely on existing database constraints for uniqueness and relational integrity.
+
+Problem:
+Concurrent requests could otherwise create invalid duplicate state.
+
+Rejected alternative:
+Rely exclusively on application-level checks.
+
+Why the alternative is worse:
+Application checks alone do not provide the same race-safety as database constraints.
+
 ### Stub — the shape of a strong "Why"
 
 **What I chose:** X.

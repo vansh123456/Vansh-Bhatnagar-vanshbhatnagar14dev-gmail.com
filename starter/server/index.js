@@ -7,6 +7,7 @@
 //       npm run build && npm start
 
 import http from 'node:http';
+import crypto from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 

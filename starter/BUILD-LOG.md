@@ -26,23 +26,160 @@ Note: this is the failure mode where a passing test is worse than a failing one.
 
 ## Phase 0 — orientation
 
-_Installed, reset the database, read the documents, ran the suites against the untouched skeleton.
-What did the starting line actually look like, and which failure surprised you?_
+### 2026-09-27 · Initial repository inspection
+
+Installed the dependencies, inspected the starter structure, database schema, candidate-facing documents, and supplied test scripts.
+
+The repository separates authentication, caller context, permission resolution, lifecycle, audit, routes, and the web console. The database is also the source of truth for roles and permissions.
+
+The first implementation target was `server/auth.js`, as the repository instructions indicated that the rest of the application depends on authenticated caller context.
+
+I also noted that the fixture contains role/permission data not described in the documents, so the implementation must remain database-driven rather than hardcoding the documented examples.
 
 ## Phase 1 — token verification
 
-_What did you expect each failure mode to look like before you ran it? Which one behaved
-differently from your expectation, and what did that tell you?_
+### 2026-09-27 · JWT verification
+
+I expected the main work to be validating the JWT structure and signature, but the supplied tests showed the verifier also has to distinguish access tokens from refresh tokens and enforce issuer, audience, JTI, and the `exp <= now` boundary.
+
+Observed: `node scripts/check-jwt.js` passed all 43 cases, including algorithm substitution, malformed tokens, signature tampering, missing claims, and refresh-token inputs.
+
+Changed: implemented `verifyAccessToken` with explicit HS256/JWT checks, signature verification, claim validation, and the half-open expiration rule.
+
+Evidence: `node scripts/check-jwt.js` — 43 passed, 0 failed.
+
+The important implementation constraint I took from this was that token-provided algorithm metadata must not determine how the token is verified.
 
 ## Phase 2 — caller context and the resolution engine
 
-_This is where most people's first model is wrong. Write down the model you started with, the
-observation that broke it, and the model you moved to. Be specific about the observation._
+### 2026-09-27 · Context and permission resolution
+
+I initially expected permission resolution to be mostly a role lookup followed by grant checks. The implementation showed that the caller context has to be established first because membership state, organization scope, and `perm_version` all affect whether permission resolution should happen.
+
+I kept the permission catalogue database-driven after checking the personalisation fixture. The catalogue is loaded from `permissions`, rather than encoding the permissions listed in the documentation.
+
+The permission tests also showed that explicit deny has precedence over allow. Time-bounded grants use a half-open interval, so `expires_at == now` is inactive.
+
+The final Phase 2 implementation passed:
+- `check-permissions.js`: 35/35
+- `check-personalisation.js`: 18/18
+- `check-jwt.js`: 43/43
+
+Evidence:
+- `server/context.js`
+- `server/permissions.js`
+- `scripts/check-permissions.js`
+- `scripts/check-personalisation.js`
+
+Evidence:
+- `node scripts/check-permissions.js`: 35 passed
+- `node scripts/check-personalisation.js`: 18 passed
+- relevant implementation: `server/context.js`, `server/permissions.js`
 
 ## Phase 3 — orgs, members, invites
 
-_Anything you had to work out that no document states. Invite lifecycle states are a common
-source of this._
+### 1. Reviewed existing authentication and authorization
+
+Before implementing Phase 3, reviewed:
+
+- `server/context.js`
+- `server/permissions.js`
+- `server/auth.js`
+- `PERMISSIONS.md`
+- `WORKFLOW.md`
+- `AUTH-DATA-MODEL.md`
+- `db/schema.sql`
+- Relevant API and permission tests
+
+The existing authentication flow establishes organization context from the authenticated token and verifies membership before route logic runs.
+
+The existing permission system resolves role permissions, explicit grants, denies, membership status, device-scoped permissions, and permission versions.
+
+Phase 3 was implemented on top of these existing mechanisms rather than replacing them.
+
+### 2. Implemented organization management
+
+Implemented:
+
+- List organizations for the authenticated user
+- Create an organization
+- Update organization name
+- Soft-delete an organization
+
+Organization routes remain scoped to the organization in the authenticated context.
+
+Creating an organization creates the initial membership with the `owner` role.
+
+### 3. Implemented member management
+
+Implemented:
+
+- List organization members
+- Change a member's role
+- Suspend a member
+- Reinstate a suspended member
+- Remove a member
+- Allow a member to leave their own organization
+
+Member-management operations use the existing permission system and role-rank rules.
+
+Self-leave and removal preserve the database user record.
+
+Membership changes update `perm_version` where required so existing access tokens become stale after permission changes.
+
+Suspension and removal also terminate the affected user's active sessions according to the existing lifecycle rules.
+
+### 4. Implemented invite lifecycle
+
+Implemented:
+
+- Create an invitation
+- List invitations
+- Revoke an invitation
+- View a public invitation
+- Accept an invitation
+
+Invitations use the existing token generation and hashing approach.
+
+Invite validity is determined from:
+
+- `accepted_at`
+- `revoked_at`
+- `expires_at`
+
+Invite acceptance creates or reuses the user and changes the invited membership to active inside a database transaction.
+
+### 5. Preserved authorization boundaries
+
+Organization IDs supplied through routes were not treated as proof of authorization.
+
+The existing request context establishes the caller's organization from the authenticated token.
+
+Requests targeting another organization return `404`.
+
+Permission checks remain centralized through `server/permissions.js`.
+
+### 6. Preserved existing database contracts
+
+No database schema changes were introduced.
+
+Existing database constraints are relied upon for:
+
+- Unique organization membership
+- One live invite per organization/email
+- Valid membership states
+- Foreign-key integrity
+- Audit-event immutability
+
+### 7. Testing
+
+Ran the relevant Phase 3 API and permission tests.
+
+Fixed implementation issues found by the tests without modifying the tests themselves.
+
+### 8. Phase 3 engineering decisions
+
+The main decisions and unresolved behavior discovered during implementation are recorded in `decisions.md`.
 
 ## Phase 4 — devices and grants
 
